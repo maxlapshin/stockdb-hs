@@ -9,6 +9,12 @@ import qualified Data.Binary.Strict.BitGet as BG
 import Control.Monad (replicateM)
 
 
+-- cabal install binary-strict
+-- cabal install binary-bits
+-- make
+-- make run
+
+
 data Quote = Quote {
   price :: Float
   ,volume :: Word32
