@@ -18,7 +18,6 @@ data Stock = Stock {
   utc :: Word64
   ,bid :: [Quote]
   ,ask :: [Quote]
-  ,left :: Int
 } deriving (Eq,Show)
 
 data StockList = StockList {
@@ -43,28 +42,45 @@ readStocks bin = do
 
 
 parsePayload :: BS.ByteString -> IO [Stock]
-parsePayload payload = do
-  rows <- replicateM 100 $ do
-    (stock, left) <- readRow payload
-    -- BS.drop left payload
-    return stock
-  return rows
-  -- readRow payload
 
+parsePayload payload = do
+  (stock, skip) <- readFirstRow payload
+  parsePayload' (BS.drop skip payload) 100 stock [stock]
+
+parsePayload' payload 0 previous acc = return (reverse acc)
+parsePayload' payload count previous acc = do
+  (stock, skip) <- readRowWithDelta payload previous
+  parsePayload' (BS.drop skip payload) (count - 1) stock (stock : acc)
 
 -- readRow :: BG.BitGet Stock
-readRow payload = do
-  let r = BG.runBitGet payload readRow'
+readFirstRow payload = do
+  let r = BG.runBitGet payload readFirstRow'
   case r of
     Left error -> fail error
     Right stock -> return stock
 
-readRow' = do
+readFirstRow' = do
   left1 <- BG.remaining
   isFullMd <- BG.getBit
   row <- case isFullMd of
     True -> readFullMd
-    False -> readDeltaMd
+    False -> fail "First row must be full"
+  left2 <- BG.remaining
+  return (row, (left1 `div` 8) - (left2 `div` 8))
+
+readRowWithDelta payload previous = do
+  let rd = readRowWithDelta' previous
+  let r = BG.runBitGet payload rd
+  case r of
+    Left error -> fail error
+    Right stock -> return stock
+
+readRowWithDelta' previous = do
+  left1 <- BG.remaining
+  isFullMd <- BG.getBit
+  row <- case isFullMd of
+    True -> readFullMd
+    False -> readDeltaMd previous
   left2 <- BG.remaining
   return (row, (left1 `div` 8) - (left2 `div` 8))
 
@@ -75,9 +91,12 @@ readFullMd = do
   bid <- readFullPrice 10
   ask <- readFullPrice 10
   left <- BG.remaining
-  return $ Stock{utc = time, bid = bid, ask = ask, left = left}
+  return $ Stock{utc = time, bid = bid, ask = ask}
 
-readDeltaMd = readFullMd
+-- readDeltaMd :: BG.BitGet Stock
+readDeltaMd previous = do
+  -- timeDelta <- leb128Decode
+  return $ Stock{utc = 0, bid = [], ask = []}
 
 readFullPrice count = do
   depth <- replicateM count $ do
