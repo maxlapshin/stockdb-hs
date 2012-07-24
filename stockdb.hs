@@ -72,7 +72,7 @@ main = do
   input <- liftM head getArgs
   content <- BS.readFile input
   res <- runEither $ readStocks content
-  print res
+  print $ length res
 
 runEither :: (Monad m) => Either String t -> m t
 runEither (Right x) = return x
@@ -81,7 +81,7 @@ runEither (Left e)  = fail e
 readStocks :: BS.ByteString -> Either String [Stock]
 readStocks = parsePayload . BS.drop (289 * 4) . skipHeaders where
     parsePayload payload = BG.runBitGet payload $
-        parsePayload' 100 (fail "First row must be full") []
+        parsePayload' 10000 (fail "First row must be full") []
     parsePayload' 0 previous acc = return (reverse acc)
     parsePayload' count previous acc = do
         stock <- readRow previous
@@ -100,7 +100,7 @@ alignAt n = do
     unless (padding == 0) $ fail ("padding == " ++ show padding)
 
 readFullMd :: BG.BitGet Stock
-readFullMd = trace "readFullMd" $ do
+readFullMd = do
     time <- BG.getAsWord64 63
     bid <- readFullQuotes
     ask <- readFullQuotes
@@ -116,12 +116,12 @@ skipHeaders :: BS.ByteString -> BS.ByteString
 skipHeaders = skipUpTo (BS.pack [10, 10])
 
 readDeltaMd :: Stock -> BG.BitGet Stock
-readDeltaMd previous = trace "readDeltaMd" $ do
+readDeltaMd previous = do
     dTime <- decodeUnsigned
     dBids <- readDeltaQuotes
     dAsks <- readDeltaQuotes
     alignAt 8
-    trace (show dTime) return Stock {
+    return Stock {
         utc = utc previous + dTime,
         bid = applyDeltas (bid previous) dBids,
         ask = applyDeltas (ask previous) dAsks
