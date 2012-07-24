@@ -13,6 +13,47 @@ import Control.Monad (replicateM)
 -- cabal install binary-bits
 -- make
 -- make run
+-- 
+-- Should add following code to decodeDeltaMd:
+-- 
+-- encode_delta_md(TimeDelta, BidAskDelta) ->
+--   ETimeDelta = leb128:encode(TimeDelta),
+-- 
+--   Unpadded = nested_foldl(fun({DPrice, DVolume}, Acc) ->
+--         PriceBits = encode_delta_value(DPrice),
+--         VolumeBits = encode_delta_value(DVolume),
+--         <<Acc/bitstring, PriceBits/bitstring, VolumeBits/bitstring>>
+--     end, <<0:1, ETimeDelta/binary>>, BidAskDelta),
+--   
+--   TailBits = erlang:bit_size(Unpadded) rem 8,
+--   MissingBits = (8 - TailBits) rem 8,
+-- 
+--   <<Unpadded/bitstring, 0:MissingBits/integer>>.
+-- 
+-- encode_delta_value(0) -> <<0:1>>;
+-- encode_delta_value(V) -> <<1:1, (leb128:encode_signed(V))/bitstring>>.
+-- 
+-- leb128.erl:
+-- 
+-- -spec encode_signed(integer()) -> bitstring().
+-- encode_signed(Value) when is_integer(Value) andalso Value >= 0 ->
+--   <<0:1, (encode(Value))/bitstring>>;
+-- 
+-- encode_signed(Value) when is_integer(Value) andalso Value < 0 ->
+--   <<1:1, (encode(-Value))/bitstring>>.
+-- 
+-- 
+-- -spec encode(non_neg_integer()) -> binary().
+-- encode(Value) when is_integer(Value) andalso Value >= 0 ->
+--   encode_unsigned(Value).
+-- 
+-- encode_unsigned(Value) ->
+--   case Value bsr 7 of
+--     0 ->
+--       <<0:1, Value:7/integer>>;
+--     NextValue ->
+--       <<1:1, Value:7/integer, (encode_unsigned(NextValue))/binary>>
+--   end.
 
 
 data Quote = Quote {
