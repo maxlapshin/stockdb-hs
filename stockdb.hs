@@ -1,14 +1,3 @@
-import System.IO
-import System.Environment
-import Data.Char
-import GHC.Prim
-import GHC.Types
-import GHC.Word
-import qualified Data.ByteString as BS
-import qualified Data.Binary.Strict.BitGet as BG
-import Control.Monad (replicateM)
-
-
 -- cabal install binary-strict
 -- cabal install binary-bits
 -- make
@@ -55,10 +44,18 @@ import Control.Monad (replicateM)
 --       <<1:1, Value:7/integer, (encode_unsigned(NextValue))/binary>>
 --   end.
 
+import qualified Data.ByteString as BS
+import qualified Data.Binary.Strict.BitGet as BG
+import System.Environment
+import Data.Word
+import Data.Int
+import Data.Bits
+import Control.Monad
+import Debug.Trace
 
 data Quote = Quote {
   price :: Float
-  ,volume :: Word32
+  ,volume :: Int32
 } deriving (Eq,Show)
 
 data Stock = Stock {
@@ -71,101 +68,84 @@ data StockList = StockList {
   stocks :: [Stock]
 } deriving (Eq,Show)
 
-
 main = do
-  (input:args) <- getArgs
+  input <- liftM head getArgs
   content <- BS.readFile input
-  res <- readStocks content
-  putStrLn $ show $ res
+  res <- runEither $ readStocks content
+  print res
 
+runEither :: (Monad m) => Either String t -> m t
+runEither (Right x) = return x
+runEither (Left e)  = fail e
 
-readStocks :: BS.ByteString -> IO [Stock]
-readStocks bin = do
-  let offsetMap = skipHeaders bin
-  let payload = BS.drop (289*4) offsetMap
-  -- StockList {stocks = parsePayload payload}
-  -- putStrLn $ show $ BS.length bin - BS.length payload
-  parsePayload payload
+readStocks :: BS.ByteString -> Either String [Stock]
+readStocks = parsePayload . BS.drop (289 * 4) . skipHeaders where
+    parsePayload payload = BG.runBitGet payload $
+        parsePayload' 100 (fail "First row must be full") []
+    parsePayload' 0 previous acc = return (reverse acc)
+    parsePayload' count previous acc = do
+        stock <- readRow previous
+        parsePayload' (count - 1) (return stock) (stock : acc)
 
+readRow :: BG.BitGet Stock -> BG.BitGet Stock
+readRow previous = iff readFullMd (previous >>= readDeltaMd)
 
-parsePayload :: BS.ByteString -> IO [Stock]
+iff :: BG.BitGet b -> BG.BitGet b -> BG.BitGet b
+iff t f = do
+    flag <- BG.getBit
+    if flag then t else f
 
-parsePayload payload = do
-  (stock, skip) <- readFirstRow payload
-  parsePayload' (BS.drop skip payload) 100 stock [stock]
-
-parsePayload' payload 0 previous acc = return (reverse acc)
-parsePayload' payload count previous acc = do
-  (stock, skip) <- readRowWithDelta payload previous
-  parsePayload' (BS.drop skip payload) (count - 1) stock (stock : acc)
-
--- readRow :: BG.BitGet Stock
-readFirstRow payload = do
-  let r = BG.runBitGet payload readFirstRow'
-  case r of
-    Left error -> fail error
-    Right stock -> return stock
-
-readFirstRow' = do
-  left1 <- BG.remaining
-  isFullMd <- BG.getBit
-  row <- case isFullMd of
-    True -> readFullMd
-    False -> fail "First row must be full"
-  left2 <- BG.remaining
-  return (row, (left1 `div` 8) - (left2 `div` 8))
-
-readRowWithDelta payload previous = do
-  let rd = readRowWithDelta' previous
-  let r = BG.runBitGet payload rd
-  case r of
-    Left error -> fail error
-    Right stock -> return stock
-
-readRowWithDelta' previous = do
-  left1 <- BG.remaining
-  isFullMd <- BG.getBit
-  row <- case isFullMd of
-    True -> readFullMd
-    False -> readDeltaMd previous
-  left2 <- BG.remaining
-  return (row, (left1 `div` 8) - (left2 `div` 8))
-
+alignAt n = do
+    padding <- BG.remaining >>= BG.getAsWord64 . (`mod` n)
+    unless (padding == 0) $ fail ("padding == " ++ show padding)
 
 readFullMd :: BG.BitGet Stock
-readFullMd = do
-  time <- BG.getAsWord64 63
-  bid <- readFullPrice 10
-  ask <- readFullPrice 10
-  left <- BG.remaining
-  return $ Stock{utc = time, bid = bid, ask = ask}
+readFullMd = trace "readFullMd" $ do
+    time <- BG.getAsWord64 63
+    bid <- readFullQuotes
+    ask <- readFullQuotes
+    alignAt 8
+    return Stock{utc = time, bid = bid, ask = ask}
+    where
+        readFullQuotes = readQuotes BG.getWord32be
 
--- readDeltaMd :: BG.BitGet Stock
-readDeltaMd previous = do
-  -- timeDelta <- leb128Decode
-  return $ Stock{utc = 0, bid = [], ask = []}
+skipUpTo :: BS.ByteString -> BS.ByteString -> BS.ByteString
+skipUpTo v = BS.drop (BS.length v) . snd . BS.breakSubstring v
 
-readFullPrice count = do
-  depth <- replicateM count $ do
-    price <- BG.getWord32be
-    volume <- BG.getWord32be
-    return Quote{price = fromIntegral price / 100.0, volume = volume}
-  return depth
+skipHeaders :: BS.ByteString -> BS.ByteString
+skipHeaders = skipUpTo (BS.pack [10, 10])
 
+readDeltaMd :: Stock -> BG.BitGet Stock
+readDeltaMd previous = trace "readDeltaMd" $ do
+    dTime <- decodeUnsigned
+    dBids <- readDeltaQuotes
+    dAsks <- readDeltaQuotes
+    alignAt 8
+    trace (show dTime) return Stock {
+        utc = utc previous + dTime,
+        bid = applyDeltas (bid previous) dBids,
+        ask = applyDeltas (ask previous) dAsks
+    }
+    where
+        readDeltaQuotes = readQuotes (decodeDelta :: BG.BitGet Int32)
+        applyDeltas = zipWith applyDelta
+        applyDelta (Quote p v) (Quote dp dv) = Quote (p + dp) (v + dv)
 
-skipHeaders bin = do
-  case BS.elemIndex 10 bin of
-    Just 0 -> BS.drop 1 bin
-    Just n -> skipHeaders $ BS.drop (n+1) bin
+readQuotes :: (Integral a) => BG.BitGet a -> BG.BitGet [Quote]
+readQuotes r = replicateM 10 $ do
+    price <- r
+    volume <- r
+    return Quote{price = fromIntegral price / 100.0, volume = fromIntegral volume}
 
+decodeDelta :: (Num a, Bits a) => BG.BitGet a
+decodeDelta = iff decodeSigned (return 0)
 
--- 
--- 
--- -- parseStocks :: IO Handle -> StockList
--- -- parseStocks bin = do
--- --   skipped <- skipHeaders bin
--- --   StockList {stocks = []}
--- 
--- 
--- -- skipHeaders :: IO BS.ByteString -> IO BS.ByteString
-    
+decodeSigned :: (Num a, Bits a) => BG.BitGet a
+decodeSigned = iff (liftM negate decodeUnsigned) decodeUnsigned
+
+decodeUnsigned :: (Num a, Bits a) => BG.BitGet a
+decodeUnsigned = do
+    hasRest <- BG.getBit
+    value <- BG.getAsWord8 7
+    rest <- if hasRest then decodeUnsigned else return 0
+    return (shiftL rest 7 + fromIntegral value)
