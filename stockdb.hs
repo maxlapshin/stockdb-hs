@@ -82,12 +82,31 @@ runEither (Left e)  = fail e
 
 readStocks :: BS.ByteString -> Either String [Stock]
 readStocks = parsePayload . BS.drop (289 * 4) . skipHeaders where
-    parsePayload payload = BG.runBitGet payload $
+    parsePayload payload = BG.runBitGet payload $ go 100000
+    go n = do
+        p  <- readFullMd
+        ps <- inner (n-1) p
+        return $! p:ps
+    inner :: Int -> Stock -> BG.BitGet [Stock]
+    inner 0 p = return []
+    inner n p = do
+        iff (do t  <- readFullMd
+                ts <- inner (n-1) p
+                return $! t:ts)
+            (do p' <- readDeltaMd p
+                ps <- inner (n-1) p'
+                return $! p':ps)
+
+
+{-
         parsePayload' 100000 (fail "First row must be full") []
     parsePayload' 0 previous acc = return (reverse acc)
     parsePayload' count previous acc = do
-        stock <- readRow previous
+        stock <- do
+            flag <- BG.getBit
+            if flag then readFullMd else previous >>= readDeltaMd
         parsePayload' (count - 1) (return stock) (stock : acc)
+-}
 
 readRow :: BG.BitGet Stock -> BG.BitGet Stock
 readRow previous = iff readFullMd (previous >>= readDeltaMd)
