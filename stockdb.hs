@@ -76,27 +76,27 @@ main = do
   print $ length $ readStocks content
 
 readStocks :: ByteString -> [Stock]
-readStocks = parsePayload . B.drop (289 * 4) . skipHeaders where
-    parsePayload = G.runGet $ BG.runBitGet (go 40000)
-    go :: Int -> BG.BitGet [Stock]
+readStocks = parsePayload . skipHeaders where
+    parsePayload = G.runGet $ G.skip (289*4) >> go 40000
+    go :: Int -> G.Get [Stock]
     go n = do
         p  <- readFullMd
         ps <- inner (n-1) p
         return $! p:ps
-    inner :: Int -> Stock -> BG.BitGet [Stock]
+    inner :: Int -> Stock -> G.Get [Stock]
     inner 0 _ = return []
     inner n p = do
-        iff (do t  <- readFullMd
-                ts <- inner (n-1) p
-                return $! t:ts)
-            (do p' <- readDeltaMd p
-                ps <- inner (n-1) p'
-                return $! p':ps)
+        iff' (do t  <- readFullMd
+                 ts <- inner (n-1) p
+                 return $! t:ts)
+             (do p' <- BG.runBitGet $ readDeltaMd p
+                 ps <- inner (n-1) p'
+                 return $! p':ps)
 
-{-
-readRow :: BG.BitGet Stock -> BG.BitGet Stock
-readRow previous = iff readFullMd (previous >>= readDeltaMd)
--}
+iff' :: G.Get b -> G.Get b -> G.Get b
+iff' t f = do
+    flag <- G.lookAhead $ BG.runBitGet $ BG.getBool
+    if flag then t else f
 
 iff :: BG.BitGet b -> BG.BitGet b -> BG.BitGet b
 iff t f = do
@@ -111,15 +111,13 @@ alignAt _ = return () -- XXX: add check back
     unless (padding == 0) $ fail ("padding == " ++ show padding)
 -}
 
-readFullMd :: BG.BitGet Stock
-readFullMd = do
-    time <- BG.getWord64be 63
-    bid1 <- readFullQuotes
-    ask1 <- readFullQuotes
-    alignAt 8
-    return Stock{utc = time, bid = bid1, ask = ask1}
+readFullMd :: G.Get Stock
+readFullMd =
+    Stock <$> G.getWord64be
+          <*> readFullQuotes
+          <*> readFullQuotes
     where
-        readFullQuotes = readQuotes (BG.getWord32be 31)
+        readFullQuotes = readQuotes G.getWord32be
         -- XXX: if we need to clear 1st bit use (BG.getBool *> BG.getWord32be 31)
 
 skipUpTo :: ByteString -> ByteString -> ByteString
