@@ -44,8 +44,11 @@
 --       <<1:1, Value:7/integer, (encode_unsigned(NextValue))/binary>>
 --   end.
 
-import qualified Data.ByteString as BS
-import qualified Data.Binary.Strict.BitGet as BG
+import           Control.Applicative
+import           Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy as B
+import qualified Data.Binary.Get      as G
+import qualified Data.Binary.Bits.Get as BG
 import System.Environment
 import Data.Word
 import Data.Int
@@ -53,12 +56,12 @@ import Data.Bits
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Monad
-import Debug.Trace
+-- import Debug.Trace
 
-data Quote = Quote {
-  price   :: {-# UNPACK #-} !Float
-  ,volume :: {-# UNPACK #-} !Int32
-} deriving (Eq,Show)
+data Quote = Quote
+  { _price   :: {-# UNPACK #-} !Float
+  , _volume :: {-# UNPACK #-} !Int32
+  } deriving (Eq,Show)
 
 data Stock = Stock {
   utc :: {-# UNPACK #-} !Word64
@@ -66,29 +69,22 @@ data Stock = Stock {
   ,ask :: Vector Quote
 } deriving (Eq,Show)
 
-data StockList = StockList {
-  stocks :: [Stock]
-} deriving (Eq,Show)
-
+main :: IO ()
 main = do
   input <- liftM head getArgs
-  content <- BS.readFile input
-  res <- runEither $ readStocks content
-  print $ length res
+  content <- B.readFile input
+  print $ length $ readStocks content
 
-runEither :: (Monad m) => Either String t -> m t
-runEither (Right x) = return x
-runEither (Left e)  = fail e
-
-readStocks :: BS.ByteString -> Either String [Stock]
-readStocks = parsePayload . BS.drop (289 * 4) . skipHeaders where
-    parsePayload payload = BG.runBitGet payload $ go 100000
+readStocks :: ByteString -> [Stock]
+readStocks = parsePayload . B.drop (289 * 4) . skipHeaders where
+    parsePayload = G.runGet $ BG.runBitGet (go 40000)
+    go :: Int -> BG.BitGet [Stock]
     go n = do
         p  <- readFullMd
         ps <- inner (n-1) p
         return $! p:ps
     inner :: Int -> Stock -> BG.BitGet [Stock]
-    inner 0 p = return []
+    inner 0 _ = return []
     inner n p = do
         iff (do t  <- readFullMd
                 ts <- inner (n-1) p
@@ -97,44 +93,45 @@ readStocks = parsePayload . BS.drop (289 * 4) . skipHeaders where
                 ps <- inner (n-1) p'
                 return $! p':ps)
 
-
 {-
-        parsePayload' 100000 (fail "First row must be full") []
-    parsePayload' 0 previous acc = return (reverse acc)
-    parsePayload' count previous acc = do
-        stock <- do
-            flag <- BG.getBit
-            if flag then readFullMd else previous >>= readDeltaMd
-        parsePayload' (count - 1) (return stock) (stock : acc)
--}
-
 readRow :: BG.BitGet Stock -> BG.BitGet Stock
 readRow previous = iff readFullMd (previous >>= readDeltaMd)
+-}
 
 iff :: BG.BitGet b -> BG.BitGet b -> BG.BitGet b
 iff t f = do
-    flag <- BG.getBit
+    flag <- BG.getBool
     if flag then t else f
 
-alignAt n = do
-    padding <- BG.remaining >>= BG.getAsWord64 . (`mod` n)
+alignAt :: Int -> BG.BitGet ()
+alignAt _ = return () -- XXX: add check back
+{-
+  do
+    padding <- BG.remaining >>= BG.getWord64be . (`mod` n)
     unless (padding == 0) $ fail ("padding == " ++ show padding)
+-}
 
 readFullMd :: BG.BitGet Stock
 readFullMd = do
-    time <- BG.getAsWord64 63
-    bid <- readFullQuotes
-    ask <- readFullQuotes
+    time <- BG.getWord64be 63
+    bid1 <- readFullQuotes
+    ask1 <- readFullQuotes
     alignAt 8
-    return Stock{utc = time, bid = bid, ask = ask}
+    return Stock{utc = time, bid = bid1, ask = ask1}
     where
-        readFullQuotes = readQuotes BG.getWord32be
+        readFullQuotes = readQuotes (BG.getWord32be 31)
+        -- XXX: if we need to clear 1st bit use (BG.getBool *> BG.getWord32be 31)
 
-skipUpTo :: BS.ByteString -> BS.ByteString -> BS.ByteString
-skipUpTo v = BS.drop (BS.length v) . snd . BS.breakSubstring v
+skipUpTo :: ByteString -> ByteString -> ByteString
+skipUpTo needle heap =
+    let h = B.head heap
+        c = B.dropWhile ( /= h) heap
+    in if needle `B.isPrefixOf` c 
+       then B.drop (B.length needle) c
+       else skipUpTo needle (B.tail c)
 
-skipHeaders :: BS.ByteString -> BS.ByteString
-skipHeaders = skipUpTo (BS.pack [10, 10])
+skipHeaders :: ByteString -> ByteString
+skipHeaders = skipUpTo (B.pack [10, 10])
 
 readDeltaMd :: Stock -> BG.BitGet Stock
 readDeltaMd previous = do
@@ -153,10 +150,9 @@ readDeltaMd previous = do
         applyDelta (Quote p v) (Quote dp dv) = Quote (p + dp) (v + dv)
 
 readQuotes :: (Integral a) => BG.BitGet a -> BG.BitGet (Vector Quote)
-readQuotes r = V.replicateM 10 $ do
-    price <- r
-    volume <- r
-    return Quote{price = fromIntegral price / 100.0, volume = fromIntegral volume}
+readQuotes r = V.replicateM 10 $ 
+    Quote <$> fmap (\p -> fromIntegral p / 100.0) r
+          <*> fmap fromIntegral r
 
 decodeDelta :: (Num a, Bits a) => BG.BitGet a
 decodeDelta = iff decodeSigned (return 0)
@@ -166,7 +162,7 @@ decodeSigned = iff (liftM negate decodeUnsigned) decodeUnsigned
 
 decodeUnsigned :: (Num a, Bits a) => BG.BitGet a
 decodeUnsigned = do
-    hasRest <- BG.getBit
-    value <- BG.getAsWord8 7
+    hasRest <- BG.getBool
+    value <- BG.getWord8 7
     rest <- if hasRest then decodeUnsigned else return 0
     return (shiftL rest 7 + fromIntegral value)
