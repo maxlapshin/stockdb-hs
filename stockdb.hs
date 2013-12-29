@@ -71,8 +71,9 @@ data Stock = Stock
 
 main :: IO ()
 main =
-  print . length . readStocks =<< B.readFile . head =<< getArgs
+  print . length . (take 40000) . readStocksStream =<< B.readFile . head =<< getArgs
 
+{-
 readStocks :: ByteString -> [Stock]
 readStocks = G.runGet $ skipHeadersM >> G.skip (289*4) >> go 40000
   where
@@ -90,6 +91,30 @@ readStocks = G.runGet $ skipHeadersM >> G.skip (289*4) >> go 40000
              (do p' <- BG.runBitGet $ readDeltaMd p
                  ps <- inner (n-1) p'
                  return $! p':ps)
+-}
+
+readStocksStream :: ByteString -> [Stock]
+readStocksStream bs = wrapper skipHeader
+  where
+    skipHeader =
+      case G.runGetOrFail (skipHeadersM >> G.skip (289*4)) bs of
+        Left (_,_,e) -> error e
+        Right (dat,_,_) -> dat
+    wrapper dt =
+      case G.runGetOrFail readFullMd dt of
+        Left (_,_,e) -> error e
+        Right (dat,_,val) -> val:go val dat
+    go val dat
+      | B.null dat = []
+      | otherwise  = 
+        case G.runGetOrFail stock dat of
+          Left (_,_,e) -> error e
+          Right (dat',_,val') -> val':go val' dat'
+      where
+        stock = iff' readFullMd (BG.runBitGet (readDeltaMd val))
+               
+
+
 
 iff' :: G.Get b -> G.Get b -> G.Get b
 iff' = geniif (G.lookAhead $ BG.runBitGet BG.getBool)
