@@ -144,14 +144,9 @@ skipUpTo needle heap =
 
 readDeltaMd :: Stock -> BG.BitGet Stock
 readDeltaMd previous = do
-    dTime <- decodeUnsigned
-    dBids <- readDeltaQuotes
-    dAsks <- readDeltaQuotes
-    return Stock {
-        utc = utc previous + dTime,
-        bid = applyDeltas (bid previous) dBids,
-        ask = applyDeltas (ask previous) dAsks
-    }
+    Stock <$> fmap (+ (utc previous))           decodeUnsigned
+          <*> fmap (applyDeltas (bid previous)) readDeltaQuotes
+          <*> fmap (applyDeltas (ask previous)) readDeltaQuotes
     where
         readDeltaQuotes = readQuotes (decodeDelta :: BG.BitGet Int32)
         applyDeltas = V.zipWith applyDelta
