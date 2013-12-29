@@ -45,6 +45,8 @@
 --   end.
 
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 
 import           Control.Applicative
@@ -56,8 +58,10 @@ import System.Environment
 import Data.Word
 import Data.Int
 import Data.Bits
-import           Data.Vector (Vector)
-import qualified Data.Vector as V
+import           Data.Vector.Unboxed (Vector)
+import qualified Data.Vector.Unboxed as V
+import qualified Data.Vector.Generic         as G
+import qualified Data.Vector.Generic.Mutable as M
 import Control.Monad
 -- import Debug.Trace
 
@@ -66,10 +70,60 @@ data Quote = Quote
   , _volume :: {-# UNPACK #-} !Int32
   } deriving (Eq,Show)
 
+-- Boilerplace code for unboxed stuff
+newtype instance V.MVector s Quote = MV_Quote (V.MVector s (Float,Int32))
+newtype instance V.Vector    Quote = V_Quote  (V.Vector    (Float,Int32))
+
+instance V.Unbox Quote
+
+instance M.MVector V.MVector Quote where
+  {-# INLINE basicLength #-}
+  {-# INLINE basicUnsafeSlice #-}
+  {-# INLINE basicOverlaps #-}
+  {-# INLINE basicUnsafeNew #-}
+  {-# INLINE basicUnsafeReplicate #-}
+  {-# INLINE basicUnsafeRead #-}
+  {-# INLINE basicUnsafeWrite #-}
+  {-# INLINE basicClear #-}
+  {-# INLINE basicSet #-}
+  {-# INLINE basicUnsafeCopy #-}
+  {-# INLINE basicUnsafeGrow #-}
+  basicLength (MV_Quote v) = M.basicLength v
+  basicUnsafeSlice i n (MV_Quote v) = MV_Quote $ M.basicUnsafeSlice i n v
+  basicOverlaps (MV_Quote v1) (MV_Quote v2) = M.basicOverlaps v1 v2
+  basicUnsafeNew n = MV_Quote `liftM` M.basicUnsafeNew n
+  basicUnsafeReplicate n (Quote x y) = MV_Quote `liftM` M.basicUnsafeReplicate n (x,y)
+  basicUnsafeRead (MV_Quote v) i = uncurry (Quote) `liftM` M.basicUnsafeRead v i
+  basicUnsafeWrite (MV_Quote v) i (Quote x y) = M.basicUnsafeWrite v i (x,y)
+  basicClear (MV_Quote v) = M.basicClear v
+  basicSet (MV_Quote v) (Quote x y) = M.basicSet v (x,y)
+  basicUnsafeCopy (MV_Quote v1) (MV_Quote v2) = M.basicUnsafeCopy v1 v2
+  basicUnsafeMove (MV_Quote v1) (MV_Quote v2) = M.basicUnsafeMove v1 v2
+  basicUnsafeGrow (MV_Quote v) n = MV_Quote `liftM` M.basicUnsafeGrow v n
+
+instance G.Vector Vector Quote where
+  {-# INLINE basicUnsafeFreeze #-}
+  {-# INLINE basicUnsafeThaw #-}
+  {-# INLINE basicLength #-}
+  {-# INLINE basicUnsafeSlice #-}
+  {-# INLINE basicUnsafeIndexM #-}
+  {-# INLINE elemseq #-}
+  basicUnsafeFreeze (MV_Quote v) = V_Quote `liftM` G.basicUnsafeFreeze v
+  basicUnsafeThaw (V_Quote v) = MV_Quote `liftM` G.basicUnsafeThaw v
+  basicLength (V_Quote v) = G.basicLength v
+  basicUnsafeSlice i n (V_Quote v) = V_Quote $ G.basicUnsafeSlice i n v
+  basicUnsafeIndexM (V_Quote v) i
+                = uncurry (Quote) `liftM` G.basicUnsafeIndexM v i
+  basicUnsafeCopy (MV_Quote mv) (V_Quote v)
+                = G.basicUnsafeCopy mv v
+  elemseq _ (Quote x y) z = G.elemseq (undefined :: Vector Float) x
+                          $ G.elemseq (undefined :: Vector Int32) y z
+
+
 data Stock = Stock 
   { utc :: {-# UNPACK #-} !Word64
-  , bid :: {-# UNPACK #-} !(Vector Quote)
-  , ask :: {-# UNPACK #-} !(Vector Quote)
+  , bid :: Vector Quote
+  , ask :: Vector Quote
   } deriving (Eq,Show)
 
 main :: IO ()
