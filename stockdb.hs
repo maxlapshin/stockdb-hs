@@ -81,7 +81,7 @@ runEither (Left e)  = fail e
 readStocks :: BS.ByteString -> Either String [Stock]
 readStocks = parsePayload . BS.drop (289 * 4) . skipHeaders where
     parsePayload payload = BG.runBitGet payload $
-        parsePayload' 10000 (fail "First row must be full") []
+        parsePayload' 100000 (fail "First row must be full") []
     parsePayload' 0 previous acc = return (reverse acc)
     parsePayload' count previous acc = do
         stock <- readRow previous
