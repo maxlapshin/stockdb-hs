@@ -63,21 +63,19 @@ data Quote = Quote
   , _volume :: {-# UNPACK #-} !Int32
   } deriving (Eq,Show)
 
-data Stock = Stock {
-  utc :: {-# UNPACK #-} !Word64
-  ,bid :: Vector Quote
-  ,ask :: Vector Quote
-} deriving (Eq,Show)
+data Stock = Stock 
+  { utc :: {-# UNPACK #-} !Word64
+  , bid :: {-# UNPACK #-} !(Vector Quote)
+  , ask :: {-# UNPACK #-} !(Vector Quote)
+  } deriving (Eq,Show)
 
 main :: IO ()
-main = do
-  input <- liftM head getArgs
-  content <- B.readFile input
-  print $ length $ readStocks content
+main =
+  print . length . readStocks =<< B.readFile . head =<< getArgs
 
 readStocks :: ByteString -> [Stock]
-readStocks = parsePayload where
-    parsePayload = G.runGet $ skipHeadersM >> G.skip (289*4) >> go 40000
+readStocks = G.runGet $ skipHeadersM >> G.skip (289*4) >> go 40000
+  where
     go :: Int -> G.Get [Stock]
     go n = do
         p  <- readFullMd
@@ -85,7 +83,7 @@ readStocks = parsePayload where
         return $! p:ps
     inner :: Int -> Stock -> G.Get [Stock]
     inner 0 _ = return []
-    inner n p = do
+    inner n p =
         iff' (do t  <- readFullMd
                  ts <- inner (n-1) p
                  return $! t:ts)
@@ -94,14 +92,14 @@ readStocks = parsePayload where
                  return $! p':ps)
 
 iff' :: G.Get b -> G.Get b -> G.Get b
-iff' t f = do
-    flag <- G.lookAhead $ BG.runBitGet $ BG.getBool
-    if flag then t else f
+iff' = geniif (G.lookAhead $ BG.runBitGet BG.getBool)
 
 iff :: BG.BitGet b -> BG.BitGet b -> BG.BitGet b
-iff t f = do
-    flag <- BG.getBool
-    if flag then t else f
+iff = geniif BG.getBool
+
+geniif :: (Monad m) => m Bool -> m a -> m a -> m a
+geniif mi t f = mi >>= \i -> if i then t else f
+{-# INLINE geniif #-}                                  
 
 readFullMd :: G.Get Stock
 readFullMd =
@@ -125,9 +123,7 @@ skipHeadersM = G.getWord8 >>= go
     go x
       | x == 10 = do
           y <- G.getWord8
-          if y == 10
-          then return ()
-          else go y
+          unless (y == 10) (go y)
       | otherwise = G.getWord8 >>= go
 {-
 skipHeaders :: ByteString -> ByteString
@@ -143,8 +139,8 @@ skipUpTo needle heap =
 -}
 
 readDeltaMd :: Stock -> BG.BitGet Stock
-readDeltaMd previous = do
-    Stock <$> fmap (+ (utc previous))           decodeUnsigned
+readDeltaMd previous =
+    Stock <$> fmap (+ utc previous)             decodeUnsigned
           <*> fmap (applyDeltas (bid previous)) readDeltaQuotes
           <*> fmap (applyDeltas (ask previous)) readDeltaQuotes
     where
