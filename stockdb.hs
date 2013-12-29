@@ -206,6 +206,10 @@ decodeUnsigned = do
     else return $! fromIntegral value
 -}
 
+-- 'decodeUnsignedCont' uses continuation passing style to prevent code
+-- from additional allocations. Also BG.block is used, this
+-- a micro-optimization that allowes to use only one boundary check instead
+-- of 2.
 decodeUnsignedCont :: (Num a, Bits a) => (a -> a) -> BG.BitGet a
 decodeUnsignedCont f = do
     (hasRest, value) <- BG.block ((,) <$> BG.bool <*> BG.word8 7)
