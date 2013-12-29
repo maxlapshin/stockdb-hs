@@ -103,14 +103,6 @@ iff t f = do
     flag <- BG.getBool
     if flag then t else f
 
-alignAt :: Int -> BG.BitGet ()
-alignAt _ = return () -- XXX: add check back
-{-
-  do
-    padding <- BG.remaining >>= BG.getWord64be . (`mod` n)
-    unless (padding == 0) $ fail ("padding == " ++ show padding)
--}
-
 readFullMd :: G.Get Stock
 readFullMd =
     Stock <$> G.getWord64be
@@ -155,7 +147,6 @@ readDeltaMd previous = do
     dTime <- decodeUnsigned
     dBids <- readDeltaQuotes
     dAsks <- readDeltaQuotes
-    alignAt 8
     return Stock {
         utc = utc previous + dTime,
         bid = applyDeltas (bid previous) dBids,
