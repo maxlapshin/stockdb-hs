@@ -44,6 +44,7 @@
 --       <<1:1, Value:7/integer, (encode_unsigned(NextValue))/binary>>
 --   end.
 
+import           Control.Applicative
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as B
 import qualified Data.Binary.Get      as G
@@ -57,10 +58,10 @@ import qualified Data.Vector as V
 import Control.Monad
 -- import Debug.Trace
 
-data Quote = Quote {
-  price   :: {-# UNPACK #-} !Float
-  ,volume :: {-# UNPACK #-} !Int32
-} deriving (Eq,Show)
+data Quote = Quote
+  { _price   :: {-# UNPACK #-} !Float
+  , _volume :: {-# UNPACK #-} !Int32
+  } deriving (Eq,Show)
 
 data Stock = Stock {
   utc :: {-# UNPACK #-} !Word64
@@ -137,10 +138,9 @@ readDeltaMd previous = do
         applyDelta (Quote p v) (Quote dp dv) = Quote (p + dp) (v + dv)
 
 readQuotes :: (Integral a) => BG.BitGet a -> BG.BitGet (Vector Quote)
-readQuotes r = V.replicateM 10 $ do
-    price1 <- r
-    volume1 <- r
-    return Quote{price = fromIntegral price1 / 100.0, volume = fromIntegral volume1}
+readQuotes r = V.replicateM 10 $ 
+    Quote <$> fmap (\p -> fromIntegral p / 100.0) r
+          <*> fmap fromIntegral r
 
 decodeDelta :: (Num a, Bits a) => BG.BitGet a
 decodeDelta = iff decodeSigned (return 0)
