@@ -108,7 +108,8 @@ readFullMd = do
     alignAt 8
     return Stock{utc = time, bid = bid1, ask = ask1}
     where
-        readFullQuotes = readQuotes (BG.getWord32be 32)
+        readFullQuotes = readQuotes (BG.getWord32be 31)
+        -- XXX: if we need to clear 1st bit use (BG.getBool *> BG.getWord32be 31)
 
 skipUpTo :: ByteString -> ByteString -> ByteString
 skipUpTo needle heap =
