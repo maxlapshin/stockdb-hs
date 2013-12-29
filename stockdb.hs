@@ -59,7 +59,7 @@ import Control.Monad
 -- import Debug.Trace
 
 data Quote = Quote
-  { _price   :: {-# UNPACK #-} !Float
+  { _price  :: {-# UNPACK #-} !Float
   , _volume :: {-# UNPACK #-} !Int32
   } deriving (Eq,Show)
 
@@ -76,8 +76,8 @@ main = do
   print $ length $ readStocks content
 
 readStocks :: ByteString -> [Stock]
-readStocks = parsePayload . skipHeaders where
-    parsePayload = G.runGet $ G.skip (289*4) >> go 40000
+readStocks = parsePayload where
+    parsePayload = G.runGet $ skipHeadersM >> G.skip (289*4) >> go 40000
     go :: Int -> G.Get [Stock]
     go n = do
         p  <- readFullMd
@@ -120,6 +120,27 @@ readFullMd =
         readFullQuotes = readQuotes G.getWord32be
         -- XXX: if we need to clear 1st bit use (BG.getBool *> BG.getWord32be 31)
 
+-- This is a hack and in general case it should use exactly the same
+-- approach as ByteString version (see comments), i.e. test character if
+-- it match needle head and then test if remaining part is a prefix, if not
+-- then test stream again. 
+-- To apologise for cheating we can remember, that we always can use rules
+-- to specify function case if bytestring is created from 2 characters
+-- only.
+skipHeadersM :: G.Get ()
+skipHeadersM = G.getWord8 >>= go
+  where
+    go x
+      | x == 10 = do
+          y <- G.getWord8
+          if y == 10
+          then return ()
+          else go y
+      | otherwise = G.getWord8 >>= go
+{-
+skipHeaders :: ByteString -> ByteString
+skipHeaders = skipUpTo (B.pack [10, 10])
+
 skipUpTo :: ByteString -> ByteString -> ByteString
 skipUpTo needle heap =
     let h = B.head heap
@@ -127,9 +148,7 @@ skipUpTo needle heap =
     in if needle `B.isPrefixOf` c 
        then B.drop (B.length needle) c
        else skipUpTo needle (B.tail c)
-
-skipHeaders :: ByteString -> ByteString
-skipHeaders = skipUpTo (B.pack [10, 10])
+-}
 
 readDeltaMd :: Stock -> BG.BitGet Stock
 readDeltaMd previous = do
