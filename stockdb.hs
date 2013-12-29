@@ -93,6 +93,22 @@ readStocks = G.runGet $ skipHeadersM >> G.skip (289*4) >> go 40000
                  return $! p':ps)
 -}
 
+-- New version of read stocks uses iterative appoach i.e. it creates a lazy
+-- list of values, running parser of a tail of an element. This means that this list
+-- may be fused inside other computations and will never be fully allocated
+-- (unless required). All lazy bytestrings that were allocated are freed after 
+-- they were read, this is done because we are not reusing storage, if we'd
+-- reuse bytestring we had to use Data.ByteString.copy operator to avoid
+-- 'memory leaks'.
+-- 
+-- However this is not the best possible approach as we may use fully
+-- iterative approach using one of the interative libraries:
+--    * iteratee
+--    * conduit
+--    * pipes
+--    * machines
+-- This approaches allowes to have understanding memory requirements and
+-- run O(1) memory algorithms.
 readStocksStream :: ByteString -> [Stock]
 readStocksStream bs = wrapper skipHeader
   where
@@ -107,17 +123,12 @@ readStocksStream bs = wrapper skipHeader
     go val dat
       | B.null dat = []
       | otherwise  = 
-        case G.runGetOrFail stock dat of
+        case G.runGetOrFail (iff' readFullMd (BG.runBitGet (readDeltaMd val))) stock dat of
           Left (_,_,e) -> error e
           Right (dat',_,val') -> val':go val' dat'
-      where
-        stock = iff' readFullMd (BG.runBitGet (readDeltaMd val))
-               
-
-
 
 iff' :: G.Get b -> G.Get b -> G.Get b
-iff' = geniif (G.lookAhead $ BG.runBitGet BG.getBool)
+iff' = geniif (G.lookAhead $ BG.runBitGet BG.getBool) -- lookahead is potentially expensive operation
 
 iff :: BG.BitGet b -> BG.BitGet b -> BG.BitGet b
 iff = geniif BG.getBool
