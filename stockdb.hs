@@ -149,10 +149,11 @@ readDeltaMd previous = do
         applyDeltas = V.zipWith applyDelta
         applyDelta (Quote p v) (Quote dp dv) = Quote (p + dp) (v + dv)
 
-readQuotes :: (Integral a) => BG.BitGet a -> BG.BitGet (Vector Quote)
+readQuotes :: (Integral a, Applicative m, Monad m) => m a -> m (Vector Quote)
 readQuotes r = V.replicateM 10 $ 
     Quote <$> fmap (\p -> fromIntegral p / 100.0) r
           <*> fmap fromIntegral r
+{-# INLINE readQuotes #-}
 
 decodeDelta :: (Num a, Bits a) => BG.BitGet a
 decodeDelta = iff decodeSigned (return 0)
