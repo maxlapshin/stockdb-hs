@@ -55,7 +55,7 @@ import Data.Bits
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Monad
-import Debug.Trace
+-- import Debug.Trace
 
 data Quote = Quote {
   price   :: {-# UNPACK #-} !Float
@@ -68,10 +68,7 @@ data Stock = Stock {
   ,ask :: Vector Quote
 } deriving (Eq,Show)
 
-data StockList = StockList {
-  stocks :: [Stock]
-} deriving (Eq,Show)
-
+main :: IO ()
 main = do
   input <- liftM head getArgs
   content <- B.readFile input
@@ -80,8 +77,8 @@ main = do
 readStocks :: ByteString -> [Stock]
 readStocks = parsePayload . B.drop (289 * 4) . skipHeaders where
     parsePayload = G.runGet $ BG.runBitGet $
-        parsePayload' 10000 (fail "First row must be full") []
-    parsePayload' 0 previous acc = return (reverse acc)
+        parsePayload' (40000::Int) (fail "First row must be full") []
+    parsePayload' 0 _previous acc = return (reverse acc)
     parsePayload' count previous acc = do
           stock <- readRow previous
           parsePayload' (count - 1) (return stock) (stock : acc)
@@ -94,7 +91,8 @@ iff t f = do
     flag <- BG.getBool
     if flag then t else f
 
-alignAt n = return () 
+alignAt :: Int -> BG.BitGet ()
+alignAt _ = return () -- XXX: add check back
 {-
   do
     padding <- BG.remaining >>= BG.getWord64be . (`mod` n)
@@ -104,10 +102,10 @@ alignAt n = return ()
 readFullMd :: BG.BitGet Stock
 readFullMd = do
     time <- BG.getWord64be 63
-    bid <- readFullQuotes
-    ask <- readFullQuotes
+    bid1 <- readFullQuotes
+    ask1 <- readFullQuotes
     alignAt 8
-    return Stock{utc = time, bid = bid, ask = ask}
+    return Stock{utc = time, bid = bid1, ask = ask1}
     where
         readFullQuotes = readQuotes (BG.getWord32be 32)
 
@@ -118,11 +116,6 @@ skipUpTo needle heap =
     in if needle `B.isPrefixOf` c 
        then B.drop (B.length needle) c
        else skipUpTo needle (B.tail c)
-
-{-
-skipUpTo :: ByteString -> ByteString -> ByteString
-skipUpTo v = B.drop (B.length v) . snd . B.breakSubstring v
--}
 
 skipHeaders :: ByteString -> ByteString
 skipHeaders = skipUpTo (B.pack [10, 10])
@@ -145,9 +138,9 @@ readDeltaMd previous = do
 
 readQuotes :: (Integral a) => BG.BitGet a -> BG.BitGet (Vector Quote)
 readQuotes r = V.replicateM 10 $ do
-    price <- r
-    volume <- r
-    return Quote{price = fromIntegral price / 100.0, volume = fromIntegral volume}
+    price1 <- r
+    volume1 <- r
+    return Quote{price = fromIntegral price1 / 100.0, volume = fromIntegral volume1}
 
 decodeDelta :: (Num a, Bits a) => BG.BitGet a
 decodeDelta = iff decodeSigned (return 0)
