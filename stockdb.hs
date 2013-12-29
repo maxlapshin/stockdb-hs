@@ -44,8 +44,10 @@
 --       <<1:1, Value:7/integer, (encode_unsigned(NextValue))/binary>>
 --   end.
 
-import qualified Data.ByteString as BS
-import qualified Data.Binary.Strict.BitGet as BG
+import           Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy as B
+import qualified Data.Binary.Get      as G
+import qualified Data.Binary.Bits.Get as BG
 import System.Environment
 import Data.Word
 import Data.Int
@@ -72,50 +74,58 @@ data StockList = StockList {
 
 main = do
   input <- liftM head getArgs
-  content <- BS.readFile input
-  res <- runEither $ readStocks content
-  print $ length res
+  content <- B.readFile input
+  print $ length $ readStocks content
 
-runEither :: (Monad m) => Either String t -> m t
-runEither (Right x) = return x
-runEither (Left e)  = fail e
-
-readStocks :: BS.ByteString -> Either String [Stock]
-readStocks = parsePayload . BS.drop (289 * 4) . skipHeaders where
-    parsePayload payload = BG.runBitGet payload $
-        parsePayload' 100000 (fail "First row must be full") []
+readStocks :: ByteString -> [Stock]
+readStocks = parsePayload . B.drop (289 * 4) . skipHeaders where
+    parsePayload = G.runGet $ BG.runBitGet $
+        parsePayload' 10000 (fail "First row must be full") []
     parsePayload' 0 previous acc = return (reverse acc)
     parsePayload' count previous acc = do
-        stock <- readRow previous
-        parsePayload' (count - 1) (return stock) (stock : acc)
+          stock <- readRow previous
+          parsePayload' (count - 1) (return stock) (stock : acc)
 
 readRow :: BG.BitGet Stock -> BG.BitGet Stock
 readRow previous = iff readFullMd (previous >>= readDeltaMd)
 
 iff :: BG.BitGet b -> BG.BitGet b -> BG.BitGet b
 iff t f = do
-    flag <- BG.getBit
+    flag <- BG.getBool
     if flag then t else f
 
-alignAt n = do
-    padding <- BG.remaining >>= BG.getAsWord64 . (`mod` n)
+alignAt n = return () 
+{-
+  do
+    padding <- BG.remaining >>= BG.getWord64be . (`mod` n)
     unless (padding == 0) $ fail ("padding == " ++ show padding)
+-}
 
 readFullMd :: BG.BitGet Stock
 readFullMd = do
-    time <- BG.getAsWord64 63
+    time <- BG.getWord64be 63
     bid <- readFullQuotes
     ask <- readFullQuotes
     alignAt 8
     return Stock{utc = time, bid = bid, ask = ask}
     where
-        readFullQuotes = readQuotes BG.getWord32be
+        readFullQuotes = readQuotes (BG.getWord32be 32)
 
-skipUpTo :: BS.ByteString -> BS.ByteString -> BS.ByteString
-skipUpTo v = BS.drop (BS.length v) . snd . BS.breakSubstring v
+skipUpTo :: ByteString -> ByteString -> ByteString
+skipUpTo needle heap =
+    let h = B.head heap
+        c = B.dropWhile ( /= h) heap
+    in if needle `B.isPrefixOf` c 
+       then B.drop (B.length needle) c
+       else skipUpTo needle (B.tail c)
 
-skipHeaders :: BS.ByteString -> BS.ByteString
-skipHeaders = skipUpTo (BS.pack [10, 10])
+{-
+skipUpTo :: ByteString -> ByteString -> ByteString
+skipUpTo v = B.drop (B.length v) . snd . B.breakSubstring v
+-}
+
+skipHeaders :: ByteString -> ByteString
+skipHeaders = skipUpTo (B.pack [10, 10])
 
 readDeltaMd :: Stock -> BG.BitGet Stock
 readDeltaMd previous = do
@@ -147,7 +157,7 @@ decodeSigned = iff (liftM negate decodeUnsigned) decodeUnsigned
 
 decodeUnsigned :: (Num a, Bits a) => BG.BitGet a
 decodeUnsigned = do
-    hasRest <- BG.getBit
-    value <- BG.getAsWord8 7
+    hasRest <- BG.getBool
+    value <- BG.getWord8 7
     rest <- if hasRest then decodeUnsigned else return 0
     return (shiftL rest 7 + fromIntegral value)
