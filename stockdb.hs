@@ -182,5 +182,7 @@ decodeUnsigned :: (Num a, Bits a) => BG.BitGet a
 decodeUnsigned = do
     hasRest <- BG.getBool
     value <- BG.getWord8 7
-    rest <- if hasRest then decodeUnsigned else return 0
-    return (shiftL rest 7 + fromIntegral value)
+    if hasRest
+    then do rest <- decodeUnsigned
+            return (shiftL rest 7 + fromIntegral value)
+    else return $! fromIntegral value
