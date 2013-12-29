@@ -44,6 +44,9 @@
 --       <<1:1, Value:7/integer, (encode_unsigned(NextValue))/binary>>
 --   end.
 
+{-# LANGUAGE BangPatterns #-}
+
+
 import           Control.Applicative
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as B
@@ -176,7 +179,7 @@ skipUpTo needle heap =
 
 readDeltaMd :: Stock -> BG.BitGet Stock
 readDeltaMd previous =
-    Stock <$> fmap (+ utc previous)             (BG.getBool *> decodeUnsignedCont (+0))
+    Stock <$> fmap (+ utc previous)             (BG.getBool *> decodeUnsigned)
           <*> fmap (applyDeltas (bid previous)) readDeltaQuotes
           <*> fmap (applyDeltas (ask previous)) readDeltaQuotes
     where
@@ -194,17 +197,24 @@ decodeDelta :: (Num a, Bits a) => BG.BitGet a
 decodeDelta = iff decodeSigned (return 0)
 
 decodeSigned :: (Num a, Bits a) => BG.BitGet a
-decodeSigned = iff (decodeUnsignedCont negate) (decodeUnsignedCont (+0))
+decodeSigned = iff (negate <$> decodeUnsigned) (decodeUnsigned)
 
-{-
 decodeUnsigned :: (Num a, Bits a) => BG.BitGet a
 decodeUnsigned = do
     (hasRest, value) <- BG.block ((,) <$> BG.bool <*> BG.word8 7)
     if hasRest
     then do rest <- decodeUnsigned
-            return (shiftL rest 7 + fromIntegral value)
+            return (unsafeShiftL rest 7 + fromIntegral value)
     else return $! fromIntegral value
--}
+{-# SPECIALIZE decodeUnsigned :: BG.BitGet Int32 #-}
+
+{-
+decodeUnsigned :: BG.BitGet Word64
+decodeUnsigned = decodeUnsignedCont (+0)
+{-# INLINE decodeUnsigned #-}
+
+decodeSigned :: (Num a, Bits a) => BG.BitGet a
+decodeSigned = iff (decodeUnsignedCont negate) (decodeUnsignedCont (+0))
 
 -- 'decodeUnsignedCont' uses continuation passing style to prevent code
 -- from additional allocations. Also BG.block is used, this
@@ -214,7 +224,7 @@ decodeUnsignedCont :: (Num a, Bits a) => (a -> a) -> BG.BitGet a
 decodeUnsignedCont f = do
     (hasRest, value) <- BG.block ((,) <$> BG.bool <*> BG.word8 7)
     if hasRest
-    then do decodeUnsignedCont (\x -> shiftL x 7 + fromIntegral value)
+    then decodeUnsignedCont (\(!x) -> unsafeShiftL x 7 + fromIntegral value)
     else return $ f (fromIntegral value)
-
-{-# SPECIALIZE decodeUnsignedCont :: (Int32 -> Int32) -> BG.BitGet Int32 #-}
+{-# SPECIALIZE INLINE decodeUnsignedCont :: (Int32 -> Int32) -> BG.BitGet Int32 #-}
+-}
