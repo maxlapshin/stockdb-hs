@@ -50,6 +50,8 @@ import System.Environment
 import Data.Word
 import Data.Int
 import Data.Bits
+import           Data.Vector (Vector)
+import qualified Data.Vector as V
 import Control.Monad
 import Debug.Trace
 
@@ -60,8 +62,8 @@ data Quote = Quote {
 
 data Stock = Stock {
   utc :: {-# UNPACK #-} !Word64
-  ,bid :: [Quote]
-  ,ask :: [Quote]
+  ,bid :: Vector Quote
+  ,ask :: Vector Quote
 } deriving (Eq,Show)
 
 data StockList = StockList {
@@ -128,11 +130,11 @@ readDeltaMd previous = do
     }
     where
         readDeltaQuotes = readQuotes (decodeDelta :: BG.BitGet Int32)
-        applyDeltas = zipWith applyDelta
+        applyDeltas = V.zipWith applyDelta
         applyDelta (Quote p v) (Quote dp dv) = Quote (p + dp) (v + dv)
 
-readQuotes :: (Integral a) => BG.BitGet a -> BG.BitGet [Quote]
-readQuotes r = replicateM 10 $ do
+readQuotes :: (Integral a) => BG.BitGet a -> BG.BitGet (Vector Quote)
+readQuotes r = V.replicateM 10 $ do
     price <- r
     volume <- r
     return Quote{price = fromIntegral price / 100.0, volume = fromIntegral volume}
