@@ -165,7 +165,7 @@ skipUpTo needle heap =
 
 readDeltaMd :: Stock -> BG.BitGet Stock
 readDeltaMd previous =
-    Stock <$> fmap (+ utc previous)             decodeUnsigned
+    Stock <$> fmap (+ utc previous)             (decodeUnsignedCont (+0))
           <*> fmap (applyDeltas (bid previous)) readDeltaQuotes
           <*> fmap (applyDeltas (ask previous)) readDeltaQuotes
     where
@@ -183,13 +183,23 @@ decodeDelta :: (Num a, Bits a) => BG.BitGet a
 decodeDelta = iff decodeSigned (return 0)
 
 decodeSigned :: (Num a, Bits a) => BG.BitGet a
-decodeSigned = iff (liftM negate decodeUnsigned) decodeUnsigned
+decodeSigned = iff (decodeUnsignedCont negate) (decodeUnsignedCont (+0))
 
+{-
 decodeUnsigned :: (Num a, Bits a) => BG.BitGet a
 decodeUnsigned = do
-    hasRest <- BG.getBool
-    value <- BG.getWord8 7
+    (hasRest, value) <- BG.block ((,) <$> BG.bool <*> BG.word8 7)
     if hasRest
     then do rest <- decodeUnsigned
             return (shiftL rest 7 + fromIntegral value)
     else return $! fromIntegral value
+-}
+
+decodeUnsignedCont :: (Num a, Bits a) => (a -> a) -> BG.BitGet a
+decodeUnsignedCont f = do
+    (hasRest, value) <- BG.block ((,) <$> BG.bool <*> BG.word8 7)
+    if hasRest
+    then do decodeUnsignedCont (\x -> shiftL x 7 + fromIntegral value)
+    else return $ f (fromIntegral value)
+
+{-# SPECIALIZE decodeUnsignedCont :: (Int32 -> Int32) -> BG.BitGet Int32 #-}
