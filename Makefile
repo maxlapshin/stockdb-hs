@@ -3,7 +3,7 @@ all: stockdb
 
 
 stockdb: stockdb.hs
-	ghc -o stockdb stockdb.hs
+	ghc -O2 -fllvm -o stockdb stockdb.hs
 
 
 run: stockdb
