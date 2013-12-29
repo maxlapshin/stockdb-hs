@@ -54,12 +54,12 @@ import Control.Monad
 import Debug.Trace
 
 data Quote = Quote {
-  price :: Float
-  ,volume :: Int32
+  price   :: {-# UNPACK #-} !Float
+  ,volume :: {-# UNPACK #-} !Int32
 } deriving (Eq,Show)
 
 data Stock = Stock {
-  utc :: Word64
+  utc :: {-# UNPACK #-} !Word64
   ,bid :: [Quote]
   ,ask :: [Quote]
 } deriving (Eq,Show)
