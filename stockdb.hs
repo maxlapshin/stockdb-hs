@@ -71,7 +71,7 @@ data Stock = Stock
 
 main :: IO ()
 main =
-  print . length . (take 40000) . readStocksStream =<< B.readFile . head =<< getArgs
+  print . length . readStocksStream =<< B.readFile . head =<< getArgs
 
 {-
 readStocks :: ByteString -> [Stock]
