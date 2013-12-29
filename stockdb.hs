@@ -123,7 +123,7 @@ readStocksStream bs = wrapper skipHeader
     go val dat
       | B.null dat = []
       | otherwise  = 
-        case G.runGetOrFail (iff' readFullMd (BG.runBitGet (readDeltaMd val))) stock dat of
+        case G.runGetOrFail (iff' readFullMd (BG.runBitGet (readDeltaMd val))) dat of
           Left (_,_,e) -> error e
           Right (dat',_,val') -> val':go val' dat'
 
@@ -176,7 +176,7 @@ skipUpTo needle heap =
 
 readDeltaMd :: Stock -> BG.BitGet Stock
 readDeltaMd previous =
-    Stock <$> fmap (+ utc previous)             (decodeUnsignedCont (+0))
+    Stock <$> fmap (+ utc previous)             (BG.getBool *> decodeUnsignedCont (+0))
           <*> fmap (applyDeltas (bid previous)) readDeltaQuotes
           <*> fmap (applyDeltas (ask previous)) readDeltaQuotes
     where
