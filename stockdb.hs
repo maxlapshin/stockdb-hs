@@ -261,14 +261,15 @@ decodeUnsigned = do
             return (unsafeShiftL rest 7 + fromIntegral value)
     else return $! fromIntegral value
 {-# SPECIALIZE decodeUnsigned :: BG.BitGet Int32 #-}
+{-# SPECIALIZE decodeUnsigned :: BG.BitGet Word64 #-}
 
 {-
 decodeUnsigned :: BG.BitGet Word64
-decodeUnsigned = decodeUnsignedCont (+0)
+decodeUnsigned = decodeUnsignedCont id
 {-# INLINE decodeUnsigned #-}
 
 decodeSigned :: (Num a, Bits a) => BG.BitGet a
-decodeSigned = iff (decodeUnsignedCont negate) (decodeUnsignedCont (+0))
+decodeSigned = iff (decodeUnsignedCont negate) (decodeUnsignedCont id)
 
 -- 'decodeUnsignedCont' uses continuation passing style to prevent code
 -- from additional allocations. Also BG.block is used, this
@@ -281,4 +282,5 @@ decodeUnsignedCont f = do
     then decodeUnsignedCont (\(!x) -> unsafeShiftL x 7 + fromIntegral value)
     else return $ f (fromIntegral value)
 {-# SPECIALIZE INLINE decodeUnsignedCont :: (Int32 -> Int32) -> BG.BitGet Int32 #-}
+{-# SPECIALIZE INLINE decodeUnsignedCont :: (Word64 -> Word64) -> BG.BitGet Word64 #-}
 -}
